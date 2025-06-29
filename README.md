@@ -116,5 +116,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Contact
 
 For questions or feedback about this project, please contact:
-- Email: contact@example.com
-- GitHub: [github.com/example](https://github.com/example)
+- Email: paranjapevedant15@gmail.com
+- GitHub: https://github.com/Vedant-lab-15/AI-sentimentana

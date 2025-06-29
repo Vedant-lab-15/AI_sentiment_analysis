@@ -7,6 +7,7 @@ import nltk
 import re
 import plotly.express as px
 import plotly.graph_objects as go
+import time
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
@@ -23,6 +24,9 @@ import warnings
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
+# Set page config
+st.set_page_config(page_title="AI-Driven Sentiment Analysis Dashboard", page_icon="📊", layout="wide")
+
 # Download required NLTK resources
 @st.cache_resource
 def download_nltk_resources():
@@ -36,9 +40,6 @@ def download_nltk_resources():
         nltk.download('wordnet')
 
 download_nltk_resources()
-
-# Set page config
-st.set_page_config(page_title="AI-Driven Sentiment Analysis Dashboard", page_icon="📊", layout="wide")
 
 # Define the main title and introduction
 st.title("🔍 AI-Driven Sentiment Analysis of E-commerce Product Reviews")
@@ -1165,12 +1166,12 @@ if __name__ == "__main__":
     
     st.sidebar.title("Developer Info")
     st.sidebar.markdown("""
-    Created by: AI Sentiment Analysis Team
+    Created by: Vedant Paranjape
     
     For more information about this project, please contact:
     
-    [📧 Email](mailto:contact@example.com)  
-    [💻 GitHub](https://github.com/example/sentiment-analysis)
+    [📧 Email](mailto:paranjapevedant15@gmail.com)  
+    [💻 GitHub](https://github.com/vedant-lab-15/sentiment-analysis)
     """)
     
     st.sidebar.title("Technologies Used")
