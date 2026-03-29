@@ -6,7 +6,6 @@ import seaborn as sns
 import nltk
 import re
 import plotly.express as px
-import plotly.graph_objects as go
 import time
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
@@ -31,12 +30,20 @@ st.set_page_config(page_title="AI-Driven Sentiment Analysis Dashboard", page_ico
 @st.cache_resource
 def download_nltk_resources():
     try:
+        nltk.data.find('tokenizers/punkt_tab')
+    except LookupError:
+        nltk.download('punkt_tab')
+    try:
         nltk.data.find('tokenizers/punkt')
-        nltk.data.find('corpora/stopwords')
-        nltk.data.find('corpora/wordnet')
     except LookupError:
         nltk.download('punkt')
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
         nltk.download('stopwords')
+    try:
+        nltk.data.find('corpora/wordnet')
+    except LookupError:
         nltk.download('wordnet')
 
 download_nltk_resources()
@@ -242,10 +249,12 @@ def load_sample_data():
     df['review_length'] = df['review_text'].apply(len)
     df['word_count'] = df['review_text'].apply(lambda x: len(x.split()))
     
+    # Preprocess text inside cached function to avoid re-running on every reload
+    df['processed_text'] = df['review_text'].apply(preprocess_text)
+    
     return df
 
 # Text preprocessing functions
-@st.cache_data
 def preprocess_text(text):
     # Convert to lowercase
     text = text.lower()
@@ -263,8 +272,7 @@ def preprocess_text(text):
     return ' '.join(tokens)
 
 # Function to extract aspects from reviews
-@st.cache_data
-def extract_aspects(texts, sentiment):
+def extract_aspects(texts, sentiment=None):
     # Keywords for different aspects
     aspects = {
         'quality': ['quality', 'durability', 'durable', 'sturdy', 'flimsy', 'solid'],
@@ -289,11 +297,17 @@ def extract_aspects(texts, sentiment):
     
     return aspect_percentages
 
+def generate_wordcloud(text, title, color):
+    wordcloud = WordCloud(width=400, height=200, background_color='white', colormap=color, max_words=50).generate(text)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.imshow(wordcloud, interpolation='bilinear')
+    ax.set_title(title)
+    ax.axis('off')
+    return fig
+
+
 # Load the data
 data = load_sample_data()
-
-# Apply preprocessing to reviews
-data['processed_text'] = data['review_text'].apply(preprocess_text)
 
 
 # Tab 1: Project Overview
@@ -517,15 +531,6 @@ with tabs[1]:
     # Word clouds with sentiment-specific colormaps
     st.subheader("Most Common Words by Sentiment")
     col1, col2, col3 = st.columns(3)
-    
-    def generate_wordcloud(text, title, color):
-        wordcloud = WordCloud(width=400, height=200, background_color='white', colormap=color, max_words=50).generate(text)
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.imshow(wordcloud, interpolation='bilinear')
-        ax.set_title(title)
-        ax.axis('off')
-        return fig
-    
     with col1:
         negative_text = ' '.join(filtered_data[filtered_data['sentiment'] == 'negative']['processed_text'])
         if negative_text.strip():
@@ -715,10 +720,10 @@ with tabs[2]:
                 model1.fit(X_train_vec, y_train)
                 model2.fit(X_train_vec, y_train)
                 
-                # For ensemble, we'll combine predictions
+                # Combine predictions: use model2 (RF) probabilities as tiebreaker
                 y_pred1 = model1.predict(X_test_vec)
                 y_pred2 = model2.predict(X_test_vec)
-                y_pred = np.where(y_pred1 == y_pred2, y_pred1, model1.predict_proba(X_test_vec).argmax(axis=1))
+                y_pred = np.where(y_pred1 == y_pred2, y_pred1, model2.predict_proba(X_test_vec).argmax(axis=1))
             
             # Train and evaluate the model
             if model_type != "Ensemble":
@@ -775,7 +780,7 @@ with tabs[2]:
                 'TfidfVectorizer(max_features=5000, ngram_range=(1, 2))' if vectorizer_type == 'TF-IDF' else 'CountVectorizer(max_features=5000, ngram_range=(1, 2))',
                 '# Apply SMOTE\nsmote = SMOTE(random_state=42)\nX_train_vec, y_train = smote.fit_resample(X_train_vec, y_train)' if balance_classes else '# No class balancing applied',
                 'model = LogisticRegression(max_iter=1000, C=1.0, class_weight="balanced")\nmodel.fit(X_train_vec, y_train)' if model_type == 'Logistic Regression' else ('model = RandomForestClassifier(n_estimators=100, class_weight="balanced")\nmodel.fit(X_train_vec, y_train)' if model_type == 'Random Forest' else '# Ensemble model\nmodel1 = LogisticRegression(max_iter=1000, C=1.0, class_weight="balanced")\nmodel2 = RandomForestClassifier(n_estimators=100, class_weight="balanced")\nmodel1.fit(X_train_vec, y_train)\nmodel2.fit(X_train_vec, y_train)'),
-                'y_pred = model.predict(X_test_vec)' if model_type != 'Ensemble' else 'y_pred1 = model1.predict(X_test_vec)\ny_pred2 = model2.predict(X_test_vec)\n# Combine predictions (use model1 for tiebreaker)\ny_pred = np.where(y_pred1 == y_pred2, y_pred1, model1.predict_proba(X_test_vec).argmax(axis=1))'
+                'y_pred = model.predict(X_test_vec)' if model_type != 'Ensemble' else 'y_pred1 = model1.predict(X_test_vec)\ny_pred2 = model2.predict(X_test_vec)\n# Combine predictions (use model2 RF as tiebreaker)\ny_pred = np.where(y_pred1 == y_pred2, y_pred1, model2.predict_proba(X_test_vec).argmax(axis=1))'
             )
             
             st.code(code, language="python")
@@ -844,17 +849,29 @@ with tabs[3]:
     
     col1, col2, col3 = st.columns(3)
     
+    # Compute metrics from actual data
+    total = len(data)
+    positive_pct = round(len(data[data['sentiment'] == 'positive']) / total * 100)
+    category_pos_rate = (
+        data[data['sentiment'] == 'positive']
+        .groupby('category').size() / data.groupby('category').size()
+    ).dropna()
+    avg_pos_rate = category_pos_rate.mean()
+    most_positive_cat = category_pos_rate.idxmax()
+    most_negative_cat = category_pos_rate.idxmin()
+    most_positive_delta = round((category_pos_rate.max() - avg_pos_rate) * 100)
+    most_negative_delta = round((category_pos_rate.min() - avg_pos_rate) * 100)
+
     with col1:
-        st.metric(label="Overall Customer Sentiment Score", value="76%", delta="3%")
-        st.markdown("*Sentiment improved 3% compared to previous period*")
+        st.metric(label="Overall Positive Sentiment", value=f"{positive_pct}%")
         
     with col2:
-        st.metric(label="Most Positive Category", value="Beauty & Personal Care", delta="+8%")
-        st.markdown("*8% higher positive sentiment than average*")
+        st.metric(label="Most Positive Category", value=most_positive_cat, delta=f"+{most_positive_delta}%")
+        st.markdown("*vs. category average*")
         
     with col3:
-        st.metric(label="Most Negative Category", value="Electronics", delta="-5%", delta_color="inverse")
-        st.markdown("*5% higher negative sentiment than average*")
+        st.metric(label="Most Negative Category", value=most_negative_cat, delta=f"{most_negative_delta}%", delta_color="inverse")
+        st.markdown("*vs. category average*")
     
     # Key findings
     st.subheader("Key Findings")
@@ -959,40 +976,44 @@ with tabs[3]:
         retention_impact = st.slider("Retention Rate Impact per 10% Sentiment Improvement", 0.0, 5.0, 2.0, 0.1)
     
     sentiment_improvement = target_sentiment - current_sentiment
-    conversion_increase = (sentiment_improvement / 10) * conversion_impact / 100
-    retention_increase = (sentiment_improvement / 10) * retention_impact / 100
     
-    additional_monthly_revenue = monthly_orders * avg_order * conversion_increase
-    additional_annual_revenue = additional_monthly_revenue * 12
-    retention_annual_revenue = monthly_orders * avg_order * 12 * retention_increase
-    total_annual_impact = additional_annual_revenue + retention_annual_revenue
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Estimated Annual Revenue Impact")
-        st.markdown(f"### ${total_annual_impact:,.2f}")
-        st.markdown(f"*Based on {sentiment_improvement}% sentiment improvement*")
+    if sentiment_improvement < 0:
+        st.warning("Target sentiment is lower than current — improvement must be positive to estimate revenue gain.")
+    else:
+        conversion_increase = (sentiment_improvement / 10) * conversion_impact / 100
+        retention_increase = (sentiment_improvement / 10) * retention_impact / 100
         
-    with col2:
-        impact_data = {
-            'Impact Type': ['New Customers', 'Customer Retention'],
-            'Annual Revenue': [additional_annual_revenue, retention_annual_revenue]
-        }
+        additional_monthly_revenue = monthly_orders * avg_order * conversion_increase
+        additional_annual_revenue = additional_monthly_revenue * 12
+        retention_annual_revenue = monthly_orders * avg_order * 12 * retention_increase
+        total_annual_impact = additional_annual_revenue + retention_annual_revenue
         
-        fig = px.bar(
-            impact_data, 
-            x='Impact Type', 
-            y='Annual Revenue',
-            color='Impact Type',
-            text_auto=True,
-            title="Revenue Impact Breakdown",
-            labels={"Annual Revenue": "Additional Annual Revenue ($)"},
-            color_discrete_sequence=["#26A69A", "#AB47BC"]
-        )
+        col1, col2 = st.columns(2)
         
-        fig.update_traces(texttemplate='$%{y:,.2f}', textposition='outside')
-        st.plotly_chart(fig, use_container_width=True)
+        with col1:
+            st.subheader("Estimated Annual Revenue Impact")
+            st.markdown(f"### ${total_annual_impact:,.2f}")
+            st.markdown(f"*Based on {sentiment_improvement}% sentiment improvement*")
+            
+        with col2:
+            impact_data = {
+                'Impact Type': ['New Customers', 'Customer Retention'],
+                'Annual Revenue': [additional_annual_revenue, retention_annual_revenue]
+            }
+            
+            fig = px.bar(
+                impact_data, 
+                x='Impact Type', 
+                y='Annual Revenue',
+                color='Impact Type',
+                text_auto=True,
+                title="Revenue Impact Breakdown",
+                labels={"Annual Revenue": "Additional Annual Revenue ($)"},
+                color_discrete_sequence=["#26A69A", "#AB47BC"]
+            )
+            
+            fig.update_traces(texttemplate='$%{y:,.2f}', textposition='outside')
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # Tab 5: Live Prediction
@@ -1017,9 +1038,6 @@ with tabs[4]:
     if st.button("Analyze Sentiment"):
         if user_input:
             with st.spinner('Analyzing sentiment...'):
-                # Simulate processing time
-                time.sleep(1.5)
-                
                 # Preprocess the input
                 processed_input = preprocess_text(user_input)
                 
@@ -1131,7 +1149,10 @@ with tabs[4]:
                     
                 # Display similar reviews (simulated)
                 st.subheader("Similar Reviews")
-                similar_sentiments = data[data['sentiment'] == sentiment.split()[-1]].sample(3)[['review_text', 'rating']]
+                base_sentiment = sentiment.split()[-1]
+                similar_pool = data[data['sentiment'] == base_sentiment]
+                n_samples = min(3, len(similar_pool))
+                similar_sentiments = similar_pool.sample(n_samples)[['review_text', 'rating']]
                 st.dataframe(similar_sentiments)
                 
                 # Display improvement suggestions
@@ -1153,33 +1174,29 @@ with tabs[4]:
         else:
             st.error("Please enter a review to analyze.")
 
-# Import all required modules
-import time
+# Sidebar info (always visible, not gated behind __main__)
+st.sidebar.title("About")
+st.sidebar.info(
+    "This interactive dashboard demonstrates AI-driven sentiment analysis for e-commerce product reviews. "
+    "It leverages natural language processing and machine learning to extract valuable insights from customer feedback."
+)
 
-# Main app execution
-if __name__ == "__main__":
-    st.sidebar.title("About")
-    st.sidebar.info(
-        "This interactive dashboard demonstrates AI-driven sentiment analysis for e-commerce product reviews. "
-        "It leverages natural language processing and machine learning to extract valuable insights from customer feedback."
-    )
-    
-    st.sidebar.title("Developer Info")
-    st.sidebar.markdown("""
-    Created by: Vedant Paranjape
-    
-    For more information about this project, please contact:
-    
-    [📧 Email](mailto:paranjapevedant15@gmail.com)  
-    [💻 GitHub](https://github.com/vedant-lab-15/sentiment-analysis)
-    """)
-    
-    st.sidebar.title("Technologies Used")
-    st.sidebar.markdown("""
-    - Python 3.9+
-    - Streamlit 1.24+
-    - Scikit-learn 1.2+
-    - NLTK 3.8+
-    - Pandas & NumPy
-    - Plotly & Matplotlib
-    """)
+st.sidebar.title("Developer Info")
+st.sidebar.markdown("""
+Created by: [Developer Name]
+
+For more information about this project, please contact:
+
+[📧 Email](mailto:[email])  
+[💻 GitHub](https://github.com/[username]/sentiment-analysis)
+""")
+
+st.sidebar.title("Technologies Used")
+st.sidebar.markdown("""
+- Python 3.9+
+- Streamlit 1.24+
+- Scikit-learn 1.2+
+- NLTK 3.8+
+- Pandas & NumPy
+- Plotly & Matplotlib
+""")
